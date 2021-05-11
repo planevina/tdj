@@ -1,6 +1,11 @@
-import re
+import re,math
+import matplotlib.image as image
+from matplotlib import cm
+from nonebot import MessageSegment as ms
 from hoshino import Service, util
 from hoshino.typing import MessageSegment, CQEvent
+from matplotlib import pyplot as plt
+from hoshino.util import fig2b64
 
 sv_help = '''评分命令：[魂石评分 魂石数据] 
 魂石属性简写为：
@@ -10,10 +15,12 @@ sv_help = '''评分命令：[魂石评分 魂石数据]
 ============================
 预测命令：[魂石预测 词条列表]
 例如：魂石预测 天攻击伤害暴击气血
+评分标准命令：评分标准
 ============================
 数据算法来自NGA作者“泡椒啊”的帖子
 '''
-
+plt.style.use('seaborn-pastel')
+plt.rcParams['font.family'] = ['DejaVuSans', 'Microsoft YaHei', 'SimSun', ]
 sv = Service('天地劫魂石评分',help_=sv_help, bundle='天地劫')
 
 
@@ -48,6 +55,21 @@ def ss_std(tp,score):
 async def send_tdjchelp(bot, ev):
     await bot.send(ev, sv_help)
 
+@sv.on_fullmatch('评分标准', only_to_me=False)
+async def send_tdjstd(bot, ev):
+    tdjstd= '''
+===各单项每点的分值===
+攻击：11，伤害：10
+穿透：6，暴击：3
+气血：7，物法免：5，物法防：1
+反伤，暴抗：0
+===总分标准===
+天：<110一般，110-164不错，165+优质
+地：<93一般，93-143不错，144+优质
+荒：<97一般，97-145不错，146+优质
+'''
+    await bot.send(ev, tdjstd)
+
 
 @sv.on_prefix(('魂石评分'))
 async def ss_rate(bot, ev):
@@ -61,6 +83,11 @@ async def ss_rate(bot, ev):
     score = 0
     errmsg = ''
     txt = txt[1:]
+    entry = []
+    label = []
+    labelmax = []
+    pct = []
+    yn = 0
     while len(txt)>0:
         m = re.match(r'^(攻击|物攻|法攻|伤害|物伤|法伤|穿透|物穿|法穿|暴击|反伤|气血|物免|法免|物防|法防|暴抗)(10|[1-9])(\D|)',txt)
         if m is None:
@@ -79,13 +106,51 @@ async def ss_rate(bot, ev):
             if ss_limit[ss_type][attr] < int(m.group(2)) or ss_min[ss_type][attr] > int(m.group(2)):
                 errmsg = f"{attr}词条的值{m.group(2)}不在{ss_type}魂石允许值范围内{ss_min[ss_type][attr]}-{ss_limit[ss_type][attr]}"
                 break
+            entry.append(attr)
+            label.append(m.group(2))
+            labelmax.append(ss_limit[ss_type][attr])
+            pct.append(round(int(m.group(2))/ss_limit[ss_type][attr],2))
             score += ss_score[attr]*int(m.group(2))
+            yn += 1
         txt = txt[len(attr)+len(m.group(2)):]
 
     if errmsg == '':
-        await bot.finish(ev, f'\n得分：{score}\n评价：{ss_std(ss_type,score)}\n===评价标准===\n天：<110一般，110-164不错，165+优质\n地：<93一般，93-143不错，144+优质\n荒：<97一般，97-145不错，146+优质', at_sender=True)
+        #生成图片
+        map_vir = cm.get_cmap(name='autumn_r')
+        norm = plt.Normalize(0,1)
+        norm_values = norm(pct)
+        colors = map_vir(norm_values)
+        redupct = [ round(1 - p,2) for p in pct]
+        fig, ax = plt.subplots()
+        y_pos = list(range(yn))
+        fig.set_size_inches(5, 4)
+        bars = ax.barh(y_pos, pct,height=0.5, color=colors, alpha=0.8, align='center')
+        bars2 = ax.barh(y_pos, redupct,height=0.5,left=pct, color="#e3e3e3", alpha=0.8, align='center')
+        ax.set_title(f"评分结果：{ss_std(ss_type,score)}（{score}分） ",fontsize = 'x-large')
+        ax.tick_params(axis='y', labelsize='x-large')
+        [spine.set_visible(False) for spine in ax.spines.values()]
+        ax.tick_params(bottom=False, left=False, labelbottom=False)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(entry)
+        ax.set_xticks([])
+        ax.invert_yaxis()
+        i = 0
+        for rect in bars:
+            w = rect.get_width()
+            ax.text(w-0.01, rect.get_y() + rect.get_height() / 2 +0.03, label[i],color="white", ha='right', va='center',fontsize = 'x-large')
+            i+=1
+        i = 0
+        for rect2 in bars2:
+            ax.text(1.01, rect2.get_y() + rect2.get_height() / 2+0.03, labelmax[i], ha='left', va='center',fontsize = 'x-large')
+            i+=1
+        #plt.subplots_adjust(left=0.15, right=0.8, top=0.9 , bottom=0.1)
+        ax.text(0, 3.5, "评分方法可输入命令：评分标准 来查看", ha='left', va='center',fontsize = 'small',color="#444444")
+        pic = util.fig2b64(plt)
+        plt.close()
+        await bot.finish(ev, f'\n{ms.image(pic)}', at_sender=True)
+        #await bot.finish(ev, f'\n得分：{score}\n评价：{ss_std(ss_type,score)}\n===评价标准===\n天：<110一般，110-164不错，165+优质\n地：<93一般，93-143不错，144+优质\n荒：<97一般，97-145不错，146+优质\n{ms.image(pic)}', at_sender=True)
     else:
-        await bot.finish(ev, f'魂石数据不正确：{errmsg}\n示例：魂石评分 天攻击4伤害10暴击4气血3', at_sender=True)
+        await bot.finish(ev, f'魂石数据不正确：{errmsg}\n示例：魂石评分 天攻击4伤害10暴击4气血3\n属性词条缩写：攻击|物攻|法攻|伤害|物伤|法伤|穿透|物穿|法穿|暴击|反伤|气血|物免|法免|物防|法防|暴抗', at_sender=True)
 
 
 @sv.on_prefix(('魂石预测'))
@@ -123,4 +188,4 @@ async def ss_yc(bot, ev):
     if errmsg == '':
         await bot.finish(ev, f'\n===预测结果===\n最高分：{maxscore}，{ss_std(ss_type,maxscore)}\n平均分：{avgscore}，{ss_std(ss_type,avgscore)}\n最低分：{minscore}，{ss_std(ss_type,minscore)}\n===评价标准===\n天：<110一般，110-164不错，165+优质\n地：<93一般，93-143不错，144+优质\n荒：<97一般，97-145不错，146+优质', at_sender=True)
     else:
-        await bot.finish(ev, f'魂石数据不正确：{errmsg}\n示例：魂石预测 天攻击伤害暴击气血', at_sender=True)
+        await bot.finish(ev, f'魂石数据不正确：{errmsg}\n示例：魂石预测 天攻击伤害暴击气血\n属性词条缩写：攻击|物攻|法攻|伤害|物伤|法伤|穿透|物穿|法穿|暴击|反伤|气血|物免|法免|物防|法防|暴抗', at_sender=True)
