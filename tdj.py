@@ -1,23 +1,30 @@
-import re,math
-import matplotlib.image as image
+import re,os
+import matplotlib
+
+matplotlib.use('Agg')
+from matplotlib import font_manager
 from matplotlib import cm
 from nonebot import MessageSegment as ms
 from hoshino import Service, util
-from hoshino.typing import MessageSegment, CQEvent
 from matplotlib import pyplot as plt
-from hoshino.util import fig2b64
+
+
+FILE_PATH = os.path.dirname(__file__)
+ICON_PATH = os.path.join(FILE_PATH,'icon')
+FONT_PATH = os.path.join(FILE_PATH,'DMFT1555301059794.ttf')
+my_font = font_manager.FontProperties(fname =FONT_PATH) 
 
 sv_help = '''评分命令：[魂石评分 魂石数据] 
 魂石属性简写为：
 攻击、伤害、穿透、暴击、反伤、气血、物免、法免、物防、法防、暴抗
 其中物攻法攻统称攻击，物伤法伤统称伤害
-例如：魂石评分 天攻击4伤害10暴击4气血3
+例如：魂石评分 输出/坦克/奶妈天/地/荒攻击4伤害10暴击4气血3
 ============================
 预测命令：[魂石预测 词条列表]
 例如：魂石预测 天攻击伤害暴击气血
 评分标准命令：评分标准
 ============================
-数据算法来自NGA作者“泡椒啊”的帖子
+数据算法来自NGA作者“泡椒啊”的帖子（有修改）
 '''
 plt.style.use('seaborn-pastel')
 plt.rcParams['font.family'] = ['DejaVuSans', 'Microsoft YaHei', 'SimSun', ]
@@ -36,18 +43,26 @@ ss_min = {
     "荒":{"攻击":3,"伤害":3,"穿透":3,"暴击":3,"反伤":3,"气血":3,"物免":3,"法免":3,"物防":3,"法防":3,"暴抗":3}
 }
 
-ss_score = {"攻击":11,"伤害":10,"穿透":6,"暴击":3,"反伤":0,"气血":7,"物免":5,"法免":5,"物防":1,"法防":1,"暴抗":0}
+ss_stds = {
+    "输出":{"攻击":11,"伤害":10,"穿透":6,"暴击":3,"反伤":1,"气血":7,"物免":5,"法免":5,"物防":1,"法防":1,"暴抗":0},
+    "坦克":{"攻击":0,"伤害":0,"穿透":0,"暴击":0,"反伤":1,"气血":12,"物免":9,"法免":9,"物防":2,"法防":2,"暴抗":0},
+    "奶妈":{"攻击":12,"伤害":1,"穿透":0,"暴击":0,"反伤":0,"气血":9,"物免":8,"法免":8,"物防":1,"法防":1,"暴抗":0}
+}
 
+
+
+rankLv = ["绝","极","卓","凡"]
+rankColor = ["#F33939","#E8A23C","#75DAFA","#808080"]
 
 def ss_std(tp,score):
     if tp == "天":
-        return "优质" if score > 164 else ("不错" if score > 109 else "一般")
+        return 0 if score > 190 else (1 if score > 154 else (2 if score > 109 else 3))
     elif tp =="地":
-        return "优质" if score > 143 else ("不错" if score > 92 else "一般")
+        return 0 if score > 166 else (1 if score > 133 else (2 if score > 92 else 3))
     elif tp == "荒":
-        return "优质" if score > 145 else ("不错" if score > 96 else "一般")
+        return 0 if score > 172 else (1 if score > 135 else (2 if score > 96 else 3))
     else:
-        return ""
+        return -1
 
 
 
@@ -57,29 +72,24 @@ async def send_tdjchelp(bot, ev):
 
 @sv.on_fullmatch('评分标准', only_to_me=False)
 async def send_tdjstd(bot, ev):
-    tdjstd= '''
-===各单项每点的分值===
-攻击：11，伤害：10
-穿透：6，暴击：3
-气血：7，物法免：5，物法防：1
-反伤，暴抗：0
-===总分标准===
-天：<110一般，110-164不错，165+优质
-地：<93一般，93-143不错，144+优质
-荒：<97一般，97-145不错，146+优质
-'''
-    await bot.send(ev, tdjstd)
+    await bot.send(ev, ms.image(f'file:///{os.path.join(FILE_PATH,"icon","pfbz.jpg")}'))
 
 
 @sv.on_prefix(('魂石评分'))
 async def ss_rate(bot, ev):
     txt = ev.message.extract_plain_text().strip()
     if not txt:
-        await bot.finish(ev, '请在后面跟魂石数据\n示例：魂石评分 天攻击4伤害10暴击4气血3', at_sender=True)
+        await bot.finish(ev, '请在后面跟魂石数据\n示例：魂石评分 输出/坦克/奶妈天/地/荒攻击4伤害10暴击4气血3', at_sender=True)
+
+    pfbz = txt[:2]
+    if pfbz not in ss_stds.keys():
+        await bot.finish(ev, '魂石数据不正确，缺少评分模板（输出/坦克/奶妈）\n示例：魂石评分 输出/坦克/奶妈天/地/荒攻击4伤害10暴击4气血3', at_sender=True)
+    ss_score = ss_stds[pfbz]
+    txt = txt[2:]
 
     ss_type = txt[:1]
     if ss_type not in ss_limit.keys():
-        await bot.finish(ev, '魂石数据不正确，缺少（天地荒）\n示例：魂石评分 天攻击4伤害10暴击4气血3', at_sender=True)
+        await bot.finish(ev, '魂石数据不正确，缺少魂石类型（天地荒）\n示例：魂石评分 输出/坦克/奶妈天/地/荒攻击4伤害10暴击4气血3', at_sender=True)
     score = 0
     errmsg = ''
     txt = txt[1:]
@@ -126,31 +136,32 @@ async def ss_rate(bot, ev):
         fig.set_size_inches(5, 4)
         bars = ax.barh(y_pos, pct,height=0.5, color=colors, alpha=0.8, align='center')
         bars2 = ax.barh(y_pos, redupct,height=0.5,left=pct, color="#e3e3e3", alpha=0.8, align='center')
-        ax.set_title(f"评分结果：{ss_std(ss_type,score)}（{score}分） ",fontsize = 'x-large')
+        plt.text(x=0.5, y=0.82, s=f"{rankLv[ss_std(ss_type,score)]}",fontproperties=my_font, fontsize=40, ha="center", transform=fig.transFigure,color=rankColor[ss_std(ss_type,score)])
+        plt.text(x=0.78, y=0.82, s= f"{pfbz}:{score}分",fontproperties=my_font, fontsize=16, ha="center", color="#666666",transform=fig.transFigure)
+
         ax.tick_params(axis='y', labelsize='x-large')
         [spine.set_visible(False) for spine in ax.spines.values()]
         ax.tick_params(bottom=False, left=False, labelbottom=False)
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(entry)
+        ax.set_yticklabels(entry,fontproperties=my_font,fontsize="20")
         ax.set_xticks([])
         ax.invert_yaxis()
         i = 0
         for rect in bars:
             w = rect.get_width()
-            ax.text(w-0.01, rect.get_y() + rect.get_height() / 2 +0.03, label[i],color="white", ha='right', va='center',fontsize = 'x-large')
+            ax.text(w-0.01, rect.get_y() + rect.get_height() / 2 +0.03, label[i],color="white", ha='right', va='center',fontproperties=my_font,fontsize = 'x-large')
             i+=1
         i = 0
         for rect2 in bars2:
-            ax.text(1.01, rect2.get_y() + rect2.get_height() / 2+0.03, labelmax[i], ha='left', va='center',fontsize = 'x-large')
+            ax.text(1.01, rect2.get_y() + rect2.get_height() / 2+0.03, labelmax[i], ha='left', va='center',fontproperties=my_font,fontsize = 'x-large')
             i+=1
-        #plt.subplots_adjust(left=0.15, right=0.8, top=0.9 , bottom=0.1)
+        plt.subplots_adjust(left=0.15, right=0.9, top=0.82 , bottom=0.1)
         ax.text(0, 3.5, "评分方法可输入命令：评分标准 来查看", ha='left', va='center',fontsize = 'small',color="#444444")
         pic = util.fig2b64(plt)
         plt.close()
         await bot.finish(ev, f'\n{ms.image(pic)}', at_sender=True)
-        #await bot.finish(ev, f'\n得分：{score}\n评价：{ss_std(ss_type,score)}\n===评价标准===\n天：<110一般，110-164不错，165+优质\n地：<93一般，93-143不错，144+优质\n荒：<97一般，97-145不错，146+优质\n{ms.image(pic)}', at_sender=True)
     else:
-        await bot.finish(ev, f'魂石数据不正确：{errmsg}\n示例：魂石评分 天攻击4伤害10暴击4气血3\n属性词条缩写：攻击|物攻|法攻|伤害|物伤|法伤|穿透|物穿|法穿|暴击|反伤|气血|物免|法免|物防|法防|暴抗', at_sender=True)
+        await bot.finish(ev, f'魂石数据不正确：{errmsg}\n示例：魂石评分 输出/坦克/奶妈天/地/荒攻击4伤害10暴击4气血3\n属性词条缩写：攻击|物攻|法攻|伤害|物伤|法伤|穿透|物穿|法穿|暴击|反伤|气血|物免|法免|物防|法防|暴抗', at_sender=True)
 
 
 @sv.on_prefix(('魂石预测'))
@@ -167,6 +178,7 @@ async def ss_yc(bot, ev):
     avgscore = 0
     errmsg = ''
     txt = txt[1:]
+    ss_score = ss_stds["输出"]
     while len(txt)>0:
         m = re.match(r'^(攻击|物攻|法攻|伤害|物伤|法伤|穿透|物穿|法穿|暴击|反伤|气血|物免|法免|物防|法防|暴抗)',txt)
         if m is None:
